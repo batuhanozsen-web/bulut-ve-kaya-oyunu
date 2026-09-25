@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#8fd3ff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Bulut ve Kaya Macerası</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- Üst bilgi çubuğu -->
+  <div id="hud" class="hidden">
+    <div id="score"><span class="star">⭐</span><span id="scoreNum">0</span></div>
+    <div class="hud-buttons">
+      <button id="btnSound" class="round" aria-label="Ses">🔊</button>
+      <button id="btnRecal" class="round hidden" aria-label="Yeniden ayarla">🎯</button>
+      <button id="btnPause" class="round" aria-label="Mola">⏸</button>
+    </div>
+  </div>
+
+  <!-- Kamera önizlemesi (ayna görüntüsü + iskelet) -->
+  <div id="camBox" class="hidden">
+    <video id="cam" playsinline muted></video>
+    <canvas id="camOverlay"></canvas>
+    <div id="camState">…</div>
+  </div>
+
+  <!-- Dokunmatik kontroller -->
+  <div id="touchControls" class="hidden">
+    <button id="tDuck" class="tbtn">⬇️<span>Eğil</span></button>
+    <div class="right">
+      <button id="tKick" class="tbtn">🦶<span>Tekme</span></button>
+      <button id="tJump" class="tbtn">⬆️<span>Zıpla</span></button>
+    </div>
+  </div>
+
+  <!-- Başlangıç ekranı -->
+  <div id="startScreen" class="overlay">
+    <div class="panel">
+      <h1>☁️ Bulut ve Kaya Macerası ⭐</h1>
+      <p class="lead">Bulut gelince <b>eğil</b>, kaya gelince <b>zıpla</b> ya da <b>tekme at</b>!</p>
+      <div class="btn-row">
+        <button id="btnCamera" class="big">📷 Kamerayla Oyna</button>
+        <button id="btnTouch" class="big alt">👆 Dokunarak Oyna</button>
+      </div>
+      <p id="startError" class="error hidden"></p>
+      <details class="parent">
+        <summary>Ebeveyn için notlar</summary>
+        <ul>
+          <li>Telefonu/tableti <b>yatay</b> ve bel hizasında sabitleyin, ön kamera çocuğa baksın.</li>
+          <li>Çocuk kameradan <b>2–3 adım</b> uzakta durmalı; başından ayaklarına kadar görünmeli.</li>
+          <li>Ortam aydınlık olsun, arkada başka kişi olmasın.</li>
+          <li>Oyunda kaybetmek yok: bulut ya da kaya çarparsa sadece küçük bir efekt olur ve oyun devam eder.</li>
+          <li>Görüntü cihazdan dışarı gönderilmez; hareket algılama tarayıcı içinde çalışır.</li>
+          <li>Klavye: ↓ eğil, ↑ / boşluk zıpla, → tekme, P mola.</li>
+        </ul>
+      </details>
+    </div>
+  </div>
+
+  <!-- Ayar (kalibrasyon) ekranı -->
+  <div id="calibScreen" class="overlay hidden">
+    <div class="panel">
+      <div id="calibIcon">🧍‍♀️</div>
+      <h2 id="calibTitle">Hazırlanıyoruz…</h2>
+      <p id="calibText"></p>
+      <div class="bar"><div id="calibBar"></div></div>
+      <button id="btnCalibCancel" class="small">Vazgeç</button>
+    </div>
+  </div>
+
+  <!-- Mola ekranı -->
+  <div id="pauseScreen" class="overlay hidden">
+    <div class="panel">
+      <h2>☕ Mola</h2>
+      <p class="lead">Toplam <b id="pauseScore">0</b> yıldız topladın!</p>
+      <div class="btn-row">
+        <button id="btnResume" class="big">▶️ Devam</button>
+        <button id="btnMenu" class="big alt">🏠 Ana Menü</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/audio.js"></script>
+  <script src="js/pose.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
