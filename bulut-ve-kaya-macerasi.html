@@ -183,6 +183,21 @@ h2 { margin: 0 0 6px; font-size: clamp(22px, 5vh, 36px); color: #e2468f; }
 .bar { height: 14px; background: #f1e3ee; border-radius: 999px; overflow: hidden; }
 #calibBar { height: 100%; width: 0; background: linear-gradient(90deg, #ff5fa2, #ffb347); transition: width .15s; }
 
+.cam-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 8px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}
+.cam-controls label { display: flex; align-items: center; gap: 6px; }
+.cam-controls select { max-width: 60vw; font-size: 14px; padding: 4px 6px; border-radius: 8px; border: 1px solid #d9c3d3; background: #fff; }
+.cam-controls input[type=range] { width: 120px; accent-color: #ff5fa2; }
+#camBox.rear #cam, #camBox.rear #camOverlay { transform: none; } /* arka kamera ayna değil */
+
 /* ---------- Dokunmatik kontroller ---------- */
 #touchControls {
   position: fixed;
@@ -257,7 +272,8 @@ h2 { margin: 0 0 6px; font-size: clamp(22px, 5vh, 36px); color: #e2468f; }
         <summary>Ebeveyn için notlar</summary>
         <ul>
           <li>Telefonu/tableti <b>yatay</b> ve bel hizasında sabitleyin, ön kamera çocuğa baksın.</li>
-          <li>Çocuk kameradan <b>2–3 adım</b> uzakta durmalı; başından ayaklarına kadar görünmeli.</li>
+          <li>Çocuk kameradan <b>2–3 adım</b> uzakta durmalı; başından dizlerine kadar görünmesi yeterli.</li>
+          <li>Sığmıyorsa ayar ekranından geniş açılı kamerayı ya da en düşük zoom'u seçin.</li>
           <li>Ortam aydınlık olsun, arkada başka kişi olmasın.</li>
           <li>Oyunda kaybetmek yok: bulut ya da kaya çarparsa sadece küçük bir efekt olur ve oyun devam eder.</li>
           <li>Görüntü cihazdan dışarı gönderilmez; hareket algılama tarayıcı içinde çalışır.</li>
@@ -274,6 +290,10 @@ h2 { margin: 0 0 6px; font-size: clamp(22px, 5vh, 36px); color: #e2468f; }
       <h2 id="calibTitle">Hazırlanıyoruz…</h2>
       <p id="calibText"></p>
       <div class="bar"><div id="calibBar"></div></div>
+      <div id="camControls" class="cam-controls">
+        <label>📷 <select id="camSelect" aria-label="Kamera seçimi"></select></label>
+        <label id="zoomWrap" class="hidden">🔍 <input id="zoomRange" type="range" aria-label="Yakınlaştırma"> <span id="zoomVal"></span></label>
+      </div>
       <button id="btnCalibCancel" class="small">Vazgeç</button>
     </div>
   </div>
@@ -410,6 +430,8 @@ window.PoseInput = (() => {
     calibrated: false,
     calibProgress: 0,
     label: '',
+    rearCamera: false,
+    zoom: null,
   };
 
   let landmarker = null;
@@ -424,6 +446,8 @@ window.PoseInput = (() => {
   let jumpArmed = true, kickArmed = true;
   let lastJumpAt = 0, lastKickAt = 0;
   let flashLabel = '', flashUntil = 0;
+  let zoomCaps = null;
+  let currentDeviceId = null;
 
   const BONES = [[11, 12], [11, 23], [12, 24], [23, 24], [11, 13], [13, 15], [12, 14], [14, 16],
     [23, 25], [25, 27], [24, 26], [26, 28]];
@@ -437,18 +461,7 @@ window.PoseInput = (() => {
       throw new Error('Bu tarayıcı kameraya erişemiyor. Sayfayı https:// ya da localhost üzerinden açın.');
     }
     onStatus('Kamera açılıyor…');
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
-    } catch (e) {
-      if (e.name === 'NotAllowedError' || e.name === 'SecurityError') throw e;
-      // bazı kameralar istenen ayarları desteklemez: en basit istekle tekrar dene
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    }
-    video.srcObject = stream;
-    await video.play();
+    await openCamera(null);
 
     if (!landmarker) {
       onStatus('Hareket algılayıcı yükleniyor… (ilk seferde biraz sürebilir)');
@@ -468,6 +481,56 @@ window.PoseInput = (() => {
         landmarker = await vision.PoseLandmarker.createFromOptions(fileset, opts('CPU'));
       }
     }
+    recalibrate();
+  }
+
+  // Kamerayı açar. deviceId verilmezse ön kamera. Görüş alanı en geniş olsun diye
+  // 4:3 oran istenir (16:9 çoğu telefonda görüntüyü kırpar) ve zoom en düşüğe çekilir.
+  async function openCamera(deviceId) {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    const pick = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { ...pick, width: { ideal: 1280 }, height: { ideal: 960 }, aspectRatio: { ideal: 4 / 3 } },
+        audio: false,
+      });
+    } catch (e) {
+      if (e.name === 'NotAllowedError' || e.name === 'SecurityError') throw e;
+      // bazı kameralar istenen ayarları desteklemez: en basit istekle tekrar dene
+      stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? pick : true, audio: false });
+    }
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    zoomCaps = caps.zoom && caps.zoom.max > caps.zoom.min ? caps.zoom : null;
+    if (zoomCaps) await setZoom(zoomCaps.min);
+    const settings = track.getSettings ? track.getSettings() : {};
+    currentDeviceId = settings.deviceId || deviceId || null;
+    state.rearCamera = settings.facingMode === 'environment';
+    video.srcObject = stream;
+    await video.play();
+    lastVideoTime = -1;
+  }
+
+  async function setZoom(z) {
+    if (!zoomCaps || !stream) return;
+    try {
+      await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ zoom: z }] });
+      state.zoom = z;
+    } catch (e) { /* desteklenmiyorsa yok say */ }
+  }
+
+  async function listCameras() {
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      return devs.filter(d => d.kind === 'videoinput')
+        .map((d, i) => ({ id: d.deviceId, label: d.label || `Kamera ${i + 1}` }));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function switchCamera(deviceId) {
+    await openCamera(deviceId);
     recalibrate();
   }
 
@@ -612,6 +675,11 @@ window.PoseInput = (() => {
     stop,
     update,
     recalibrate,
+    listCameras,
+    switchCamera,
+    setZoom,
+    get zoomCaps() { return zoomCaps; },
+    get currentDeviceId() { return currentDeviceId; },
     state,
     consumeJump() { const j = jumpQ; jumpQ = false; return j; },
     consumeKick() { const k = kickQ; kickQ = false; return k; },
@@ -753,8 +821,48 @@ window.PoseInput = (() => {
     Sound.speak('Hazır mısın? Başlıyoruz!');
   }
 
+  // Ayar ekranındaki kamera listesi ve zoom kaydırıcısı
+  async function refreshCamControls() {
+    const sel = $('camSelect');
+    const cams = await PoseInput.listCameras();
+    sel.innerHTML = '';
+    for (const c of cams) {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = /ultra|geniş|wide|0[.,]5/i.test(c.label) ? `${c.label} ⭐ geniş açı` : c.label;
+      sel.appendChild(o);
+    }
+    if (PoseInput.currentDeviceId) sel.value = PoseInput.currentDeviceId;
+    show('camControls', cams.length > 1 || !!PoseInput.zoomCaps);
+    sel.parentElement.classList.toggle('hidden', cams.length < 2);
+    const z = PoseInput.zoomCaps;
+    show('zoomWrap', !!z);
+    if (z) {
+      const r = $('zoomRange');
+      r.min = z.min; r.max = z.max; r.step = z.step || 0.1;
+      r.value = PoseInput.state.zoom ?? z.min;
+      $('zoomVal').textContent = Number(r.value).toFixed(1) + 'x';
+    }
+    $('camBox').classList.toggle('rear', PoseInput.state.rearCamera);
+  }
+
+  $('camSelect').addEventListener('change', async e => {
+    try {
+      await PoseInput.switchCamera(e.target.value);
+    } catch (err) {
+      console.error(err);
+    }
+    refreshCamControls();
+  });
+  $('zoomRange').addEventListener('input', e => {
+    const v = Number(e.target.value);
+    $('zoomVal').textContent = v.toFixed(1) + 'x';
+    PoseInput.setZoom(v);
+  });
+
   function goCalib() {
     mode = 'calib';
+    refreshCamControls();
     PoseInput.recalibrate();
     show('startScreen', false);
     show('pauseScreen', false);
@@ -1003,7 +1111,7 @@ window.PoseInput = (() => {
       if (!st.visible) {
         $('calibIcon').textContent = '👀';
         $('calibTitle').textContent = 'Seni göremiyorum';
-        $('calibText').textContent = 'Kameradan 2–3 adım geri çekil. Başından ayaklarına kadar görünmelisin.';
+        $('calibText').textContent = 'Kameradan geri çekil. Başından dizlerine kadar görünmen yeterli. Sığmıyorsan aşağıdan geniş açılı kamerayı seç.';
       } else {
         $('calibIcon').textContent = '🧍‍♀️';
         $('calibTitle').textContent = 'Harika! Kıpırdamadan dur…';

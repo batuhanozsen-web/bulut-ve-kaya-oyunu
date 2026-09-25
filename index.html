@@ -55,7 +55,8 @@
         <summary>Ebeveyn için notlar</summary>
         <ul>
           <li>Telefonu/tableti <b>yatay</b> ve bel hizasında sabitleyin, ön kamera çocuğa baksın.</li>
-          <li>Çocuk kameradan <b>2–3 adım</b> uzakta durmalı; başından ayaklarına kadar görünmeli.</li>
+          <li>Çocuk kameradan <b>2–3 adım</b> uzakta durmalı; başından dizlerine kadar görünmesi yeterli.</li>
+          <li>Sığmıyorsa ayar ekranından geniş açılı kamerayı ya da en düşük zoom'u seçin.</li>
           <li>Ortam aydınlık olsun, arkada başka kişi olmasın.</li>
           <li>Oyunda kaybetmek yok: bulut ya da kaya çarparsa sadece küçük bir efekt olur ve oyun devam eder.</li>
           <li>Görüntü cihazdan dışarı gönderilmez; hareket algılama tarayıcı içinde çalışır.</li>
@@ -72,6 +73,10 @@
       <h2 id="calibTitle">Hazırlanıyoruz…</h2>
       <p id="calibText"></p>
       <div class="bar"><div id="calibBar"></div></div>
+      <div id="camControls" class="cam-controls">
+        <label>📷 <select id="camSelect" aria-label="Kamera seçimi"></select></label>
+        <label id="zoomWrap" class="hidden">🔍 <input id="zoomRange" type="range" aria-label="Yakınlaştırma"> <span id="zoomVal"></span></label>
+      </div>
       <button id="btnCalibCancel" class="small">Vazgeç</button>
     </div>
   </div>

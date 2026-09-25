@@ -20,6 +20,8 @@ window.PoseInput = (() => {
     calibrated: false,
     calibProgress: 0,
     label: '',
+    rearCamera: false,
+    zoom: null,
   };
 
   let landmarker = null;
@@ -34,6 +36,8 @@ window.PoseInput = (() => {
   let jumpArmed = true, kickArmed = true;
   let lastJumpAt = 0, lastKickAt = 0;
   let flashLabel = '', flashUntil = 0;
+  let zoomCaps = null;
+  let currentDeviceId = null;
 
   const BONES = [[11, 12], [11, 23], [12, 24], [23, 24], [11, 13], [13, 15], [12, 14], [14, 16],
     [23, 25], [25, 27], [24, 26], [26, 28]];
@@ -47,18 +51,7 @@ window.PoseInput = (() => {
       throw new Error('Bu tarayıcı kameraya erişemiyor. Sayfayı https:// ya da localhost üzerinden açın.');
     }
     onStatus('Kamera açılıyor…');
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
-    } catch (e) {
-      if (e.name === 'NotAllowedError' || e.name === 'SecurityError') throw e;
-      // bazı kameralar istenen ayarları desteklemez: en basit istekle tekrar dene
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    }
-    video.srcObject = stream;
-    await video.play();
+    await openCamera(null);
 
     if (!landmarker) {
       onStatus('Hareket algılayıcı yükleniyor… (ilk seferde biraz sürebilir)');
@@ -78,6 +71,56 @@ window.PoseInput = (() => {
         landmarker = await vision.PoseLandmarker.createFromOptions(fileset, opts('CPU'));
       }
     }
+    recalibrate();
+  }
+
+  // Kamerayı açar. deviceId verilmezse ön kamera. Görüş alanı en geniş olsun diye
+  // 4:3 oran istenir (16:9 çoğu telefonda görüntüyü kırpar) ve zoom en düşüğe çekilir.
+  async function openCamera(deviceId) {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    const pick = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { ...pick, width: { ideal: 1280 }, height: { ideal: 960 }, aspectRatio: { ideal: 4 / 3 } },
+        audio: false,
+      });
+    } catch (e) {
+      if (e.name === 'NotAllowedError' || e.name === 'SecurityError') throw e;
+      // bazı kameralar istenen ayarları desteklemez: en basit istekle tekrar dene
+      stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? pick : true, audio: false });
+    }
+    const track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    zoomCaps = caps.zoom && caps.zoom.max > caps.zoom.min ? caps.zoom : null;
+    if (zoomCaps) await setZoom(zoomCaps.min);
+    const settings = track.getSettings ? track.getSettings() : {};
+    currentDeviceId = settings.deviceId || deviceId || null;
+    state.rearCamera = settings.facingMode === 'environment';
+    video.srcObject = stream;
+    await video.play();
+    lastVideoTime = -1;
+  }
+
+  async function setZoom(z) {
+    if (!zoomCaps || !stream) return;
+    try {
+      await stream.getVideoTracks()[0].applyConstraints({ advanced: [{ zoom: z }] });
+      state.zoom = z;
+    } catch (e) { /* desteklenmiyorsa yok say */ }
+  }
+
+  async function listCameras() {
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      return devs.filter(d => d.kind === 'videoinput')
+        .map((d, i) => ({ id: d.deviceId, label: d.label || `Kamera ${i + 1}` }));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function switchCamera(deviceId) {
+    await openCamera(deviceId);
     recalibrate();
   }
 
@@ -222,6 +265,11 @@ window.PoseInput = (() => {
     stop,
     update,
     recalibrate,
+    listCameras,
+    switchCamera,
+    setZoom,
+    get zoomCaps() { return zoomCaps; },
+    get currentDeviceId() { return currentDeviceId; },
     state,
     consumeJump() { const j = jumpQ; jumpQ = false; return j; },
     consumeKick() { const k = kickQ; kickQ = false; return k; },

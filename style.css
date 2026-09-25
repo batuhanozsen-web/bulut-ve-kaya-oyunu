@@ -170,6 +170,21 @@ h2 { margin: 0 0 6px; font-size: clamp(22px, 5vh, 36px); color: #e2468f; }
 .bar { height: 14px; background: #f1e3ee; border-radius: 999px; overflow: hidden; }
 #calibBar { height: 100%; width: 0; background: linear-gradient(90deg, #ff5fa2, #ffb347); transition: width .15s; }
 
+.cam-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 8px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}
+.cam-controls label { display: flex; align-items: center; gap: 6px; }
+.cam-controls select { max-width: 60vw; font-size: 14px; padding: 4px 6px; border-radius: 8px; border: 1px solid #d9c3d3; background: #fff; }
+.cam-controls input[type=range] { width: 120px; accent-color: #ff5fa2; }
+#camBox.rear #cam, #camBox.rear #camOverlay { transform: none; } /* arka kamera ayna değil */
+
 /* ---------- Dokunmatik kontroller ---------- */
 #touchControls {
   position: fixed;

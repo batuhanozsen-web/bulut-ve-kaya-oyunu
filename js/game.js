@@ -132,8 +132,48 @@
     Sound.speak('Hazır mısın? Başlıyoruz!');
   }
 
+  // Ayar ekranındaki kamera listesi ve zoom kaydırıcısı
+  async function refreshCamControls() {
+    const sel = $('camSelect');
+    const cams = await PoseInput.listCameras();
+    sel.innerHTML = '';
+    for (const c of cams) {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = /ultra|geniş|wide|0[.,]5/i.test(c.label) ? `${c.label} ⭐ geniş açı` : c.label;
+      sel.appendChild(o);
+    }
+    if (PoseInput.currentDeviceId) sel.value = PoseInput.currentDeviceId;
+    show('camControls', cams.length > 1 || !!PoseInput.zoomCaps);
+    sel.parentElement.classList.toggle('hidden', cams.length < 2);
+    const z = PoseInput.zoomCaps;
+    show('zoomWrap', !!z);
+    if (z) {
+      const r = $('zoomRange');
+      r.min = z.min; r.max = z.max; r.step = z.step || 0.1;
+      r.value = PoseInput.state.zoom ?? z.min;
+      $('zoomVal').textContent = Number(r.value).toFixed(1) + 'x';
+    }
+    $('camBox').classList.toggle('rear', PoseInput.state.rearCamera);
+  }
+
+  $('camSelect').addEventListener('change', async e => {
+    try {
+      await PoseInput.switchCamera(e.target.value);
+    } catch (err) {
+      console.error(err);
+    }
+    refreshCamControls();
+  });
+  $('zoomRange').addEventListener('input', e => {
+    const v = Number(e.target.value);
+    $('zoomVal').textContent = v.toFixed(1) + 'x';
+    PoseInput.setZoom(v);
+  });
+
   function goCalib() {
     mode = 'calib';
+    refreshCamControls();
     PoseInput.recalibrate();
     show('startScreen', false);
     show('pauseScreen', false);
@@ -382,7 +422,7 @@
       if (!st.visible) {
         $('calibIcon').textContent = '👀';
         $('calibTitle').textContent = 'Seni göremiyorum';
-        $('calibText').textContent = 'Kameradan 2–3 adım geri çekil. Başından ayaklarına kadar görünmelisin.';
+        $('calibText').textContent = 'Kameradan geri çekil. Başından dizlerine kadar görünmen yeterli. Sığmıyorsan aşağıdan geniş açılı kamerayı seç.';
       } else {
         $('calibIcon').textContent = '🧍‍♀️';
         $('calibTitle').textContent = 'Harika! Kıpırdamadan dur…';
