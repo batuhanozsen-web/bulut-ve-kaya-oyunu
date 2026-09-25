@@ -197,7 +197,7 @@ h2 { margin: 0 0 6px; font-size: clamp(22px, 5vh, 36px); color: #e2468f; }
   align-items: flex-end;
   pointer-events: none;
 }
-#touchControls .right { display: flex; gap: 12px; }
+#touchControls .left, #touchControls .right { display: flex; gap: 12px; }
 .tbtn {
   pointer-events: auto;
   width: clamp(70px, 17vh, 110px);

@@ -1,4 +1,4 @@
-// Bulut ve Kaya Macerası — ana oyun döngüsü, çizim ve kurallar.
+// Bulut, Top ve Su Macerası — ana oyun döngüsü, çizim ve kurallar.
 (() => {
   'use strict';
 
@@ -26,6 +26,9 @@
 
   // ---------- Oyun durumu ----------
   const KICK_DUR = 0.55;
+  const FLIP_DUR = 0.95;  // takla süresi (s)
+  const BLOW_DUR = 0.9;
+  const WET_DUR = 5;
   const GRAVITY = 6;     // U / s²
   const JUMP_V = 3.1;    // U / s
   const LEG = 0.16;      // bacak parçası uzunluğu (U)
@@ -51,6 +54,7 @@
   const player = {
     x: 0, jumpH: 0, vy: 0, crouch: 0, runPhase: 0,
     kickT: 0, wobbleT: 0, surpriseT: 0, wantDuck: false,
+    flipT: 0, blowT: 0, wetT: 0,
   };
 
   // ---------- Girdi ----------
@@ -59,13 +63,13 @@
 
   function doJump() {
     if (mode !== 'play') return;
-    if (player.jumpH > 0.5) return;
+    if (player.jumpH > 0.5 || player.flipT > 0) return;
     player.vy = JUMP_V * U;
     player.jumpH = 0.01;
     Sound.jump();
-    // Yaklaşmakta olan kaya varsa "atlandı" say (çocuklar için cömert zamanlama).
+    // Yaklaşan su birikintisi ya da top varsa "atlandı" say (çocuklar için cömert zamanlama).
     for (const o of obstacles) {
-      if (o.type !== 'rock' || o.state !== 'come') continue;
+      if ((o.type !== 'puddle' && o.type !== 'ball') || o.state !== 'come') continue;
       const dx = o.x - player.x;
       if (dx > -0.3 * U && dx < 1.7 * U) o.cleared = true;
     }
@@ -73,9 +77,37 @@
 
   function doKick() {
     if (mode !== 'play') return;
-    if (player.kickT > 0) return;
+    if (player.kickT > 0 || player.flipT > 0) return;
     player.kickT = KICK_DUR;
     Sound.whoosh();
+  }
+
+  // Üfleme: ağızdan rüzgâr çıkar; yaklaşan bulut varsa uçup gider.
+  function doBlow() {
+    if (mode !== 'play') return;
+    if (player.blowT > 0 || player.flipT > 0) return;
+    player.blowT = BLOW_DUR;
+    Sound.wind();
+    const g = girlGeom(player);
+    for (let i = 0; i < 16; i++) {
+      particles.push({
+        kind: 'wind', x: g.headX + 0.14 * U, y: g.headY + 0.06 * U + rand(-0.08, 0.08) * U,
+        vx: rand(3, 5.5) * U, vy: rand(-1.2, 0.1) * U, life: 0, max: rand(0.5, 0.9),
+        size: rand(0.08, 0.18) * U, rot: rand(0, 6), color: '#ffffff',
+      });
+    }
+    for (const o of obstacles) {
+      if (o.type !== 'cloud' || o.hit || o.done || o.blown) continue;
+      const dx = o.x - player.x;
+      if (dx > -0.2 * U && dx < 3.8 * U) {
+        o.blown = true;
+        o.done = true;
+        o.vx = 3.2 * U;
+        o.vy = -1.3 * U;
+        success('Bulutu uçurdun!', o.x, cloudY() - 0.2 * U);
+        break;
+      }
+    }
   }
 
   window.addEventListener('keydown', e => {
@@ -84,6 +116,7 @@
     if (k === 'arrowdown' || k === 's') keys.duck = true;
     else if (k === 'arrowup' || k === 'w' || k === ' ') { doJump(); e.preventDefault(); }
     else if (k === 'arrowright' || k === 'd' || k === 'k') doKick();
+    else if (k === 'b' || k === 'u') doBlow();
     else if (k === 'p' || k === 'escape') togglePause();
   });
   window.addEventListener('keyup', e => {
@@ -99,6 +132,7 @@
   holdButton($('tDuck'), () => { touchDuck = true; }, () => { touchDuck = false; });
   holdButton($('tJump'), doJump);
   holdButton($('tKick'), doKick);
+  holdButton($('tBlow'), doBlow);
 
   // ---------- Ekran akışı ----------
   function show(id, on) { $(id).classList.toggle('hidden', !on); }
@@ -114,7 +148,7 @@
     hint = null;
     speedF = 1;
     lostT = 0;
-    Object.assign(player, { jumpH: 0, vy: 0, crouch: 0, kickT: 0, wobbleT: 0, surpriseT: 0 });
+    Object.assign(player, { jumpH: 0, vy: 0, crouch: 0, kickT: 0, wobbleT: 0, surpriseT: 0, flipT: 0, blowT: 0, wetT: 0 });
   }
 
   function startCountdown() {
@@ -185,8 +219,18 @@
     Sound.speak('Kameraya bak ve dik dur.');
   }
 
+  // Mikrofon isteğe bağlı: izin verilmezse oyun üflemeyi sadece yüzden algılar.
+  async function startMic() {
+    try {
+      await BlowMic.init(Sound.context());
+    } catch (e) {
+      console.warn('Mikrofon açılamadı', e);
+    }
+  }
+
   function goMenu() {
     mode = 'menu';
+    BlowMic.stop();
     if (useCamera) PoseInput.stop();
     useCamera = false;
     resetGame();
@@ -219,6 +263,8 @@
     mode = 'loading';
     try {
       await PoseInput.init($('cam'), $('camOverlay'), msg => { $('calibText').textContent = msg; });
+      $('calibText').textContent = 'Mikrofon açılıyor… (bulutu üflemek için)';
+      await startMic();
       if (mode === 'loading') goCalib();
     } catch (err) {
       console.error(err);
@@ -241,6 +287,7 @@
     useCamera = false;
     resetGame();
     startCountdown();
+    startMic();
   });
 
   $('btnCalibCancel').addEventListener('click', goMenu);
@@ -297,111 +344,155 @@
   }
 
   // ---------- Engeller ----------
+  // bulut: eğil ya da üfle · top: vur (tekme) · su birikintisi: zıpla
   function spawn() {
-    let type = Math.random() < 0.5 ? 'cloud' : 'rock';
-    if (lastTypes.length >= 2 && lastTypes[0] === lastTypes[1]) type = lastTypes[0] === 'cloud' ? 'rock' : 'cloud';
+    const types = ['cloud', 'ball', 'puddle'].filter(t => t !== lastTypes[0]);
+    const type = types[Math.floor(Math.random() * types.length)];
     lastTypes.unshift(type);
     lastTypes.length = Math.min(lastTypes.length, 2);
+    const x = W + U;
     if (type === 'cloud') {
-      obstacles.push({ type, x: W + U, w: 1.25 * U, h: 0.5 * U, hit: false, done: false, stormT: 0, hinted: false, wob: rand(0, 6) });
+      obstacles.push({ type, x, w: 1.25 * U, h: 0.5 * U, hit: false, blown: false, done: false, stormT: 0, hinted: false, wob: rand(0, 6), by: 0, vx: 0, vy: 0, spin: 0 });
+    } else if (type === 'ball') {
+      const r = 0.16 * U;
+      obstacles.push({ type, x, y: groundY - r, r, state: 'come', rot: 0, vx: 0, vy: 0, cleared: false, done: false, hinted: false, life: 0 });
     } else {
-      const r = 0.17 * U;
-      const shape = [];
-      for (let i = 0; i < 9; i++) shape.push(rand(0.85, 1.08));
-      obstacles.push({ type, x: W + U, y: groundY - r, r, shape, state: 'come', rot: 0, vx: 0, vy: 0, cleared: false, done: false, hinted: false });
+      obstacles.push({ type, x, w: 1.0 * U, state: 'come', cleared: false, done: false, hinted: false });
     }
   }
 
   function updateObstacles(dt, v, moving) {
     const g = girlGeom(player);
+    const textY = g.top - 0.2 * U;
     for (const o of obstacles) {
-      if (o.type === 'cloud') {
-        if (moving) o.x -= v * dt;
-        if (o.stormT > 0) {
-          o.stormT -= dt;
-          // yağmur damlaları
-          for (let i = 0; i < 3; i++) {
-            particles.push({
-              kind: 'rain', x: o.x + rand(-0.4, 0.4) * o.w, y: cloudY() + 0.2 * U,
-              vx: -0.3 * U, vy: rand(3, 4) * U, life: 0, max: 0.6, size: 0.08 * U, color: '#7fc4ff',
-            });
-          }
-        }
-        const dx = Math.abs(o.x - player.x);
-        if (!o.hit && !o.done && dx < o.w * 0.35 + 0.12 * U && g.top < groundY - CLOUD_BOTTOM * U) {
-          o.hit = true;
-          o.stormT = 2.2;
-          flash = 1;
-          player.surpriseT = 1.2;
-          player.wobbleT = 0.6;
-          Sound.thunder();
-          addText('Fırtına! ⛈️', player.x, g.top - 0.2 * U, '#5b6b8c');
-        }
-        if (!o.hit && !o.done && o.x < player.x - 0.6 * U) {
-          o.done = true;
-          success('Süper eğildin!', player.x, g.top - 0.2 * U);
-        }
-      } else {
-        if (o.state === 'come') {
-          if (moving) o.x -= v * dt;
-          const dx = o.x - player.x;
-          if (player.jumpH > 0.3 * U && Math.abs(dx) < 0.4 * U) o.cleared = true;
-          // tekme
-          if (player.kickT > 0 && dx > -0.2 * U && dx < 1.1 * U) {
-            o.state = 'broken';
-            o.done = true;
-            breakRock(o);
-            success('Güçlü tekme!', o.x, o.y - 0.5 * U);
-            continue;
-          }
-          // çarpma → kaya yuvarlanarak üstünden geçer
-          if (!o.cleared && Math.abs(dx) < 0.3 * U && player.jumpH < 0.25 * U) {
-            o.state = 'roll';
-            o.vx = -1.7 * U * speedF;
-            o.vy = -2.6 * U;
-            player.wobbleT = 0.8;
-            player.surpriseT = 1;
-            Sound.thump();
-            burst(o.x, groundY, 8, 'dust', ['#d9c7a3', '#c9b48c']);
-            addText('Hoppala! 🙃', player.x, g.top - 0.2 * U, '#8a6d3b');
-          }
-          if (o.cleared && !o.done && dx < -0.5 * U) {
-            o.done = true;
-            success('Harika zıpladın!', player.x, g.top - 0.2 * U);
-          }
-        } else if (o.state === 'roll') {
-          o.x += o.vx * dt;
-          o.vy += GRAVITY * U * dt;
-          o.y += o.vy * dt;
-          o.rot += (o.vx / o.r) * dt;
-          if (o.y > groundY - o.r) {
-            o.y = groundY - o.r;
-            if (Math.abs(o.vy) > 0.5 * U) {
-              burst(o.x, groundY, 4, 'dust', ['#d9c7a3', '#c9b48c']);
-              Sound.thump();
-            }
-            o.vy = -o.vy * 0.45;
-          }
-        }
-      }
+      if (o.type === 'cloud') updateCloud(o, dt, v, moving, g, textY);
+      else if (o.type === 'ball') updateBall(o, dt, v, moving, textY);
+      else updatePuddle(o, dt, v, moving, textY);
     }
-    obstacles = obstacles.filter(o => o.x > -2 * U && o.state !== 'broken');
+    obstacles = obstacles.filter(o => o.x > -2 * U && o.x < W + 3 * U && !(o.type === 'ball' && o.life > 4));
   }
 
-  function breakRock(o) {
-    Sound.crunch();
-    flash = Math.max(flash, 0.3);
-    for (let i = 0; i < 10; i++) {
-      const a = rand(-Math.PI * 0.95, -Math.PI * 0.05);
-      const sp = rand(1.2, 2.8) * U;
-      particles.push({
-        kind: 'shard', x: o.x + rand(-0.5, 0.5) * o.r, y: o.y + rand(-0.5, 0.5) * o.r,
-        vx: Math.cos(a) * sp + 1.2 * U, vy: Math.sin(a) * sp, rot: rand(0, 6), vr: rand(-10, 10),
-        size: rand(0.25, 0.5) * o.r, life: 0, max: 1.3, color: i % 2 ? '#9aa0a6' : '#7d848b',
-      });
+  function updateCloud(o, dt, v, moving, g, textY) {
+    if (o.blown) {
+      // üflenen bulut dönerek uzaklaşır
+      o.x += o.vx * dt;
+      o.by += o.vy * dt;
+      o.spin += dt * 2.5;
+      return;
     }
-    burst(o.x, o.y, 8, 'dust', ['#e0dcd5', '#c7c2ba']);
+    if (moving) o.x -= v * dt;
+    if (o.stormT > 0) {
+      o.stormT -= dt;
+      for (let i = 0; i < 3; i++) {
+        particles.push({
+          kind: 'rain', x: o.x + rand(-0.4, 0.4) * o.w, y: cloudY() + 0.2 * U,
+          vx: -0.3 * U, vy: rand(3, 4) * U, life: 0, max: 0.6, size: 0.08 * U, color: '#7fc4ff',
+        });
+      }
+    }
+    const dx = Math.abs(o.x - player.x);
+    if (!o.hit && !o.done && dx < o.w * 0.35 + 0.12 * U && g.top < groundY - CLOUD_BOTTOM * U) {
+      o.hit = true;
+      o.stormT = 2.2;
+      flash = 1;
+      player.surpriseT = 1.2;
+      player.wobbleT = 0.6;
+      player.wetT = Math.max(player.wetT, 3);
+      Sound.thunder();
+      addText('Fırtına! ⛈️', player.x, textY, '#5b6b8c');
+    }
+    if (!o.hit && !o.done && o.x < player.x - 0.6 * U) {
+      o.done = true;
+      success('Süper eğildin!', player.x, textY);
+    }
   }
+
+  function updateBall(o, dt, v, moving, textY) {
+    if (o.state === 'come') {
+      if (moving) {
+        o.x -= v * dt;
+        o.rot -= (v / o.r) * dt; // sola yuvarlanır
+      }
+      const dx = o.x - player.x;
+      if (player.jumpH > 0.3 * U && Math.abs(dx) < 0.4 * U) o.cleared = true;
+      // vuruş: top havaya uçar
+      if (player.kickT > 0 && dx > -0.2 * U && dx < 1.1 * U) {
+        o.state = 'kicked';
+        o.done = true;
+        o.vx = 3.6 * U;
+        o.vy = -3.4 * U;
+        Sound.kickBall();
+        burst(o.x, o.y, 8, 'star', ['#ffd23f', '#fff38a']);
+        success('Süper vuruş!', o.x, o.y - 0.6 * U);
+        return;
+      }
+      // vuramazsa: topa çarpar ve bir takla atar
+      if (!o.cleared && Math.abs(dx) < 0.3 * U && player.jumpH < 0.25 * U) {
+        o.state = 'bounce';
+        o.done = true;
+        o.vx = 1.8 * U;
+        o.vy = -2.4 * U;
+        player.flipT = FLIP_DUR;
+        player.kickT = 0;
+        player.surpriseT = FLIP_DUR + 0.3;
+        Sound.boing();
+        burst(player.x, groundY, 6, 'dust', ['#d9c7a3', '#c9b48c']);
+        addText('Takla! 🤸', player.x, textY - 0.3 * U, '#b5338a');
+      }
+      if (o.cleared && !o.done && dx < -0.5 * U) {
+        o.done = true;
+        success('Harika zıpladın!', player.x, textY);
+      }
+    } else {
+      o.life += dt;
+      o.x += o.vx * dt;
+      o.vy += GRAVITY * U * dt;
+      o.y += o.vy * dt;
+      o.rot += (o.vx / o.r) * dt;
+      if (o.y > groundY - o.r) {
+        o.y = groundY - o.r;
+        if (Math.abs(o.vy) > 0.6 * U) Sound.thump();
+        o.vy = -o.vy * 0.6;
+        o.vx *= 0.9;
+      }
+      if (o.state === 'kicked' && Math.random() < 0.5) {
+        particles.push({ kind: 'star', x: o.x, y: o.y, vx: 0, vy: 0, rot: 0, vr: 3, size: 0.03 * U, life: 0, max: 0.5, color: '#fff38a' });
+      }
+    }
+  }
+
+  function updatePuddle(o, dt, v, moving, textY) {
+    if (moving) o.x -= v * dt;
+    if (o.state !== 'come') return;
+    const dx = o.x - player.x;
+    if (player.jumpH > 0.2 * U && Math.abs(dx) < 0.45 * U) o.cleared = true;
+    // zıplamazsa: şlap! su sıçrar, karakter ıslanır
+    if (!o.cleared && Math.abs(dx) < 0.3 * U && player.jumpH < 0.15 * U) {
+      o.state = 'splashed';
+      o.done = true;
+      player.wetT = WET_DUR;
+      player.surpriseT = 1;
+      Sound.splash();
+      for (let i = 0; i < 26; i++) {
+        particles.push({
+          kind: 'drop', x: player.x + rand(-0.3, 0.3) * U, y: groundY,
+          vx: rand(-1.2, 1.2) * U, vy: rand(-3.6, -1.8) * U, life: 0, max: 1.2,
+          size: rand(0.025, 0.05) * U, color: i % 2 ? '#5ec8ff' : '#a9e2ff',
+        });
+      }
+      addText('Şlap! Islandık 💦', player.x, textY, '#2a7fc2');
+    }
+    if (o.cleared && !o.done && dx < -0.6 * U) {
+      o.done = true;
+      success('Harika zıpladın!', player.x, textY);
+    }
+  }
+
+  const HINTS = {
+    cloud: { text: '☁️ EĞİL ⬇️ ya da ÜFLE 💨', say: 'Bulut geliyor! Eğil ya da üfle!', color: '#5b6b8c' },
+    ball: { text: '⚽ TOPA VUR! 🦶', say: 'Top geliyor, vur!', color: '#e2468f' },
+    puddle: { text: '💧 ZIPLA! ⬆️', say: 'Su birikintisi! Zıpla!', color: '#2a7fc2' },
+  };
 
   function cloudY() { return groundY - (CLOUD_BOTTOM + 0.25) * U; }
 
@@ -413,8 +504,11 @@
       PoseInput.update(now);
       if (PoseInput.consumeJump()) doJump();
       if (PoseInput.consumeKick()) doKick();
-      $('camState').textContent = PoseInput.state.label;
+      if (PoseInput.consumeBlow()) doBlow();
+      $('camState').textContent = PoseInput.state.label + (BlowMic.state.active ? ' 🎤' : '');
     }
+    BlowMic.update(now, Sound.busy() || mode !== 'play');
+    if (BlowMic.consume()) doBlow();
 
     if (mode === 'calib') {
       const st = PoseInput.state;
@@ -454,13 +548,24 @@
     // oyuncu
     player.x = W * 0.26;
     player.wantDuck = keys.duck || touchDuck || (useCamera && PoseInput.state.duck && mode === 'play');
-    const target = player.wantDuck && player.jumpH <= 0 ? 1 : 0;
+    const flipping = player.flipT > 0;
+    const target = flipping ? 1 : player.wantDuck && player.jumpH <= 0 ? 1 : 0;
     player.crouch += (target - player.crouch) * Math.min(1, dt * 14);
-    if (player.jumpH > 0) {
+    if (flipping) {
+      // takla: küçük bir sıçrayışla havada tam tur
+      player.flipT = Math.max(0, player.flipT - dt);
+      const k = 1 - player.flipT / FLIP_DUR;
+      player.jumpH = 0.6 * U * Math.sin(Math.PI * k);
+      player.vy = 0;
+      if (player.flipT === 0) {
+        player.jumpH = 0;
+        burst(player.x, groundY, 5, 'dust', ['#d9c7a3', '#c9b48c']);
+      }
+    } else if (player.jumpH > 0) {
       let g = GRAVITY * U;
-      // atlanan kayanın üstünde biraz süzül
-      const assist = obstacles.some(o => o.type === 'rock' && o.cleared && o.state === 'come' &&
-        o.x - player.x > -0.45 * U && o.x - player.x < 0.8 * U);
+      // atlanan su birikintisinin / topun üstünde biraz süzül
+      const assist = obstacles.some(o => (o.type === 'puddle' || o.type === 'ball') && o.cleared && o.state === 'come' &&
+        o.x - player.x > -0.55 * U && o.x - player.x < 0.8 * U);
       if (assist && player.jumpH < 0.45 * U) player.vy = Math.max(player.vy, (0.45 * U - player.jumpH) * 4);
       else if (assist && player.vy < 0) g *= 0.25;
       player.vy -= g * dt;
@@ -475,6 +580,18 @@
     if (player.kickT > 0) player.kickT = Math.max(0, player.kickT - dt);
     if (player.wobbleT > 0) player.wobbleT = Math.max(0, player.wobbleT - dt);
     if (player.surpriseT > 0) player.surpriseT = Math.max(0, player.surpriseT - dt);
+    if (player.blowT > 0) player.blowT = Math.max(0, player.blowT - dt);
+    if (player.wetT > 0) {
+      player.wetT = Math.max(0, player.wetT - dt);
+      // ıslak: saçtan ve elbiseden damlalar
+      if (Math.random() < dt * 10) {
+        const g = girlGeom(player);
+        particles.push({
+          kind: 'drop', x: player.x + rand(-0.18, 0.18) * U, y: rand(g.top + 0.05 * U, g.hipY), vx: 0, vy: 0.3 * U,
+          life: 0, max: 0.8, size: 0.022 * U, color: '#5ec8ff',
+        });
+      }
+    }
 
     // engeller
     if (mode === 'play') {
@@ -489,10 +606,10 @@
       // uyarı
       for (const o of obstacles) {
         const dx = o.x - player.x;
-        if (!o.hinted && dx > 0 && dx < 3.4 * U && (o.type === 'cloud' || o.state === 'come')) {
+        if (!o.hinted && dx > 0 && dx < 3.4 * U && !o.done) {
           o.hinted = true;
           hint = { type: o.type, t: 2.2 };
-          Sound.speak(o.type === 'cloud' ? 'Bulut geliyor, eğil!' : 'Kaya geliyor! Zıpla ya da tekme at!');
+          Sound.speak(HINTS[o.type].say);
         }
       }
     } else if (mode === 'paused') {
@@ -505,11 +622,12 @@
       p.life += dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
-      if (p.kind === 'shard' || p.kind === 'confetti' || p.kind === 'star') p.vy += (p.kind === 'shard' ? 5 : 2) * U * dt;
+      if (p.kind === 'drop') p.vy += 6 * U * dt;
+      if (p.kind === 'confetti' || p.kind === 'star') p.vy += 2 * U * dt;
       if (p.kind === 'dust') { p.vy *= 0.9; p.vx *= 0.9; }
+      if (p.kind === 'wind') { p.vx *= 0.97; }
       if (p.vr) p.rot += p.vr * dt;
-      if (p.kind === 'shard' && p.y > groundY) { p.y = groundY; p.vy *= -0.3; p.vx *= 0.6; }
-      if (p.kind === 'rain' && p.y > groundY) p.life = p.max;
+      if ((p.kind === 'rain' || p.kind === 'drop') && p.y > groundY && p.vy > 0) p.life = p.max;
     }
     particles = particles.filter(p => p.life < p.max);
     for (const t of texts) t.t += dt;
@@ -643,8 +761,16 @@
 
   // ---------- Engel çizimi ----------
   function drawCloudObstacle(o) {
-    const y = cloudY() + Math.sin(time * 2 + o.wob) * 0.03 * U;
+    const y = cloudY() + o.by + Math.sin(time * 2 + o.wob) * 0.03 * U;
     const storm = o.stormT > 0;
+    ctx.save();
+    if (o.blown) {
+      const sc = Math.max(0.3, 1 - o.spin * 0.25);
+      ctx.translate(o.x, y);
+      ctx.rotate(o.spin);
+      ctx.scale(sc, sc);
+      ctx.translate(-o.x, -y);
+    }
     if (storm) {
       // şimşek
       if (Math.sin(time * 30) > 0.2) drawBolt(o.x + 0.1 * o.w, y + 0.2 * U, groundY - 0.2 * U);
@@ -682,6 +808,7 @@
       ctx.fillStyle = 'rgba(255, 140, 180, .45)';
       ctx.beginPath(); circle(ex - 0.06 * U, ey + 0.05 * U, 0.03 * U); circle(ex + 0.2 * o.w + 0.06 * U, ey + 0.05 * U, 0.03 * U); ctx.fill();
     }
+    ctx.restore();
   }
 
   function drawBolt(x, y1, y2) {
@@ -702,47 +829,57 @@
     ctx.restore();
   }
 
-  function drawRock(o) {
+  function drawBall(o) {
+    // gölge
+    const lift = clamp(1 - (groundY - o.r - o.y) / (2 * U), 0.2, 1);
+    ctx.fillStyle = 'rgba(0, 0, 0, .15)';
+    ctx.beginPath(); ctx.ellipse(o.x, groundY + 0.01 * U, o.r * 1.05 * lift, o.r * 0.22 * lift, 0, 0, Math.PI * 2); ctx.fill();
     ctx.save();
     ctx.translate(o.x, o.y);
-    // gölge
-    if (o.state === 'come') {
-      ctx.fillStyle = 'rgba(0, 0, 0, .15)';
-      ctx.beginPath(); ctx.ellipse(0, o.r, o.r * 1.1, o.r * 0.25, 0, 0, Math.PI * 2); ctx.fill();
-    }
     ctx.rotate(o.rot);
-    const grad = ctx.createRadialGradient(-o.r * 0.3, -o.r * 0.4, o.r * 0.1, 0, 0, o.r * 1.1);
-    grad.addColorStop(0, '#c4c9cf');
-    grad.addColorStop(1, '#7d848b');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    o.shape.forEach((k, i) => {
-      const a = i / o.shape.length * Math.PI * 2;
-      ctx.lineTo(Math.cos(a) * o.r * k, Math.sin(a) * o.r * k * 0.92);
-    });
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = '#5f666d';
-    ctx.lineWidth = 0.02 * U;
-    ctx.stroke();
-    // yosun ve çatlak
-    ctx.fillStyle = '#7bbf5a';
-    ctx.beginPath(); ctx.ellipse(o.r * 0.2, -o.r * 0.75, o.r * 0.35, o.r * 0.14, 0.2, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#5f666d';
-    ctx.lineWidth = 0.012 * U;
-    ctx.beginPath(); ctx.moveTo(o.r * 0.3, o.r * 0.1); ctx.lineTo(o.r * 0.5, o.r * 0.35); ctx.lineTo(o.r * 0.4, o.r * 0.6); ctx.stroke();
-    // sevimli yüz (oyuncuya bakar)
-    ctx.fillStyle = '#2d2d2d';
-    ctx.beginPath(); circle(-o.r * 0.45, -o.r * 0.1, o.r * 0.1); circle(-o.r * 0.05, -o.r * 0.1, o.r * 0.1); ctx.fill();
+    // renkli plaj topu dilimleri
+    const cols = ['#ff4d6d', '#ffd23f', '#4cb3ff', '#ffffff', '#6bd66b', '#ffffff'];
+    for (let i = 0; i < 6; i++) {
+      ctx.fillStyle = cols[i];
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, o.r, i * Math.PI / 3, (i + 1) * Math.PI / 3);
+      ctx.closePath();
+      ctx.fill();
+    }
     ctx.fillStyle = '#fff';
-    ctx.beginPath(); circle(-o.r * 0.48, -o.r * 0.14, o.r * 0.035); circle(-o.r * 0.08, -o.r * 0.14, o.r * 0.035); ctx.fill();
-    ctx.strokeStyle = '#2d2d2d';
-    ctx.lineWidth = 0.014 * U;
-    ctx.beginPath();
-    if (o.state === 'roll') circle(-o.r * 0.25, o.r * 0.25, o.r * 0.1);
-    else ctx.arc(-o.r * 0.25, o.r * 0.12, o.r * 0.15, 0.2 * Math.PI, 0.8 * Math.PI);
-    ctx.stroke();
+    ctx.beginPath(); circle(0, 0, o.r * 0.2); ctx.fill();
     ctx.restore();
+    ctx.strokeStyle = 'rgba(0, 0, 0, .25)';
+    ctx.lineWidth = 0.015 * U;
+    ctx.beginPath(); circle(o.x, o.y, o.r); ctx.stroke();
+    // parlaklık (dönmez)
+    ctx.fillStyle = 'rgba(255, 255, 255, .55)';
+    ctx.beginPath(); ctx.ellipse(o.x - o.r * 0.35, o.y - o.r * 0.4, o.r * 0.28, o.r * 0.16, -0.6, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function drawPuddle(o) {
+    const splashed = o.state === 'splashed';
+    const w = o.w * (splashed ? 0.75 : 1);
+    const cy = groundY + 0.035 * U;
+    const grad = ctx.createLinearGradient(0, cy - 0.06 * U, 0, cy + 0.06 * U);
+    grad.addColorStop(0, '#9fe0ff');
+    grad.addColorStop(1, '#3d9be0');
+    ctx.fillStyle = 'rgba(40, 110, 170, .35)';
+    ctx.beginPath(); ctx.ellipse(o.x, cy + 0.01 * U, w / 2 + 0.03 * U, 0.075 * U, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.ellipse(o.x, cy, w / 2, 0.065 * U, 0, 0, Math.PI * 2); ctx.fill();
+    // dalgacıklar
+    ctx.strokeStyle = 'rgba(255, 255, 255, .7)';
+    ctx.lineWidth = 0.012 * U;
+    for (let i = 0; i < 2; i++) {
+      const k = (time * 0.8 + i * 0.5) % 1;
+      ctx.globalAlpha = 1 - k;
+      ctx.beginPath(); ctx.ellipse(o.x + (i ? 0.15 : -0.12) * U, cy, 0.05 * U + k * 0.18 * U, 0.012 * U + k * 0.035 * U, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(255, 255, 255, .8)';
+    ctx.beginPath(); ctx.ellipse(o.x - w * 0.22, cy - 0.025 * U, 0.06 * U, 0.012 * U, 0, 0, Math.PI * 2); ctx.fill();
   }
 
   // ---------- Karakter ----------
@@ -787,6 +924,15 @@
     ctx.beginPath(); ctx.ellipse(p.x, groundY + 0.02 * U, 0.22 * U * sh, 0.05 * U * sh, 0, 0, Math.PI * 2); ctx.fill();
 
     ctx.save();
+    if (p.flipT > 0) {
+      // takla: gövdenin ortası etrafında geriye doğru tam tur
+      const k = 1 - p.flipT / FLIP_DUR;
+      const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      const cx = g.hipX + 0.05 * U, cy = g.hipY - 0.1 * U;
+      ctx.translate(cx, cy);
+      ctx.rotate(-Math.PI * 2 * e);
+      ctx.translate(-cx, -cy);
+    }
     if (p.wobbleT > 0) {
       const a = Math.sin(p.wobbleT * 25) * 0.15 * (p.wobbleT / 0.8);
       ctx.translate(g.hipX, g.bottom);
@@ -794,8 +940,9 @@
       ctx.translate(-g.hipX, -g.bottom);
     }
 
-    const air = p.jumpH > 0.5;
+    const air = p.jumpH > 0.5 && p.flipT <= 0;
     const ph = p.runPhase;
+    const wet = p.wetT > 0;
     const kickA = p.kickT > 0 ? Math.sin(Math.PI * (1 - p.kickT / KICK_DUR)) : 0;
 
     // bacak açıları [uyluk, baldır] — pozitif = ileri
@@ -836,8 +983,8 @@
     const bArm = segs(g.shX - 0.05 * s, aY, 0.13 * s, arms[1][0], arms[1][1]);
     limb(g.shX - 0.05 * s, aY, bArm, armW, skinDark);
 
-    // elbise
-    ctx.fillStyle = '#ff5fa2';
+    // elbise (ıslanınca koyulaşır)
+    ctx.fillStyle = wet ? '#d93d86' : '#ff5fa2';
     ctx.beginPath();
     ctx.moveTo(g.shX - 0.085 * s, g.shY);
     ctx.lineTo(g.shX + 0.085 * s, g.shY);
@@ -893,17 +1040,31 @@
     ctx.lineTo(hx + 0.1 * s, hy - hr * 0.8);
     ctx.closePath();
     ctx.fill();
+    // ıslak saçta su damlaları
+    if (wet) {
+      ctx.fillStyle = '#7fd0ff';
+      for (const [ox, oy] of [[-0.09, -0.12], [0.05, -0.15], [-0.14, 0.02]]) {
+        ctx.beginPath();
+        ctx.moveTo(hx + ox * s, hy + oy * s - 0.03 * s);
+        ctx.quadraticCurveTo(hx + ox * s + 0.02 * s, hy + oy * s, hx + ox * s, hy + oy * s + 0.012 * s);
+        ctx.quadraticCurveTo(hx + ox * s - 0.02 * s, hy + oy * s, hx + ox * s, hy + oy * s - 0.03 * s);
+        ctx.fill();
+      }
+    }
     // yüz
     ctx.fillStyle = '#3b2a4a';
     ctx.beginPath(); circle(hx + 0.005 * s, hy + 0.02 * s, 0.018 * s); circle(hx + 0.085 * s, hy + 0.02 * s, 0.018 * s); ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.beginPath(); circle(hx + 0.0 * s, hy + 0.013 * s, 0.006 * s); circle(hx + 0.08 * s, hy + 0.013 * s, 0.006 * s); ctx.fill();
+    const blowing = p.blowT > 0;
     ctx.fillStyle = 'rgba(255, 120, 150, .45)';
-    ctx.beginPath(); circle(hx - 0.03 * s, hy + 0.06 * s, 0.022 * s); circle(hx + 0.12 * s, hy + 0.06 * s, 0.022 * s); ctx.fill();
+    const cheek = blowing ? 0.036 * s : 0.022 * s; // üflerken yanaklar şişer
+    ctx.beginPath(); circle(hx - 0.03 * s, hy + 0.06 * s, cheek); circle(hx + 0.12 * s, hy + 0.06 * s, cheek); ctx.fill();
     ctx.strokeStyle = '#a0344f';
     ctx.lineWidth = 0.012 * s;
     ctx.beginPath();
-    if (p.surpriseT > 0) circle(hx + 0.045 * s, hy + 0.08 * s, 0.018 * s);
+    if (blowing) circle(hx + 0.07 * s, hy + 0.075 * s, 0.013 * s);
+    else if (p.surpriseT > 0) circle(hx + 0.045 * s, hy + 0.08 * s, 0.018 * s);
     else ctx.arc(hx + 0.045 * s, hy + 0.05 * s, 0.035 * s, 0.15 * Math.PI, 0.85 * Math.PI);
     ctx.stroke();
 
@@ -939,11 +1100,19 @@
         ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
         ctx.fillStyle = p.color; ctx.fillRect(-p.size, -p.size * 0.4, p.size * 2, p.size * 0.8);
         ctx.restore();
-      } else if (p.kind === 'shard') {
-        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      } else if (p.kind === 'drop') {
         ctx.fillStyle = p.color;
-        ctx.beginPath(); ctx.moveTo(-p.size, -p.size * 0.6); ctx.lineTo(p.size, -p.size * 0.3); ctx.lineTo(p.size * 0.3, p.size * 0.8); ctx.closePath(); ctx.fill();
-        ctx.restore();
+        ctx.beginPath(); circle(p.x, p.y, p.size); ctx.fill();
+      } else if (p.kind === 'wind') {
+        // kıvrımlı rüzgâr çizgisi
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 0.02 * U;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(p.x - p.size, p.y);
+        ctx.quadraticCurveTo(p.x - p.size * 0.4, p.y - p.size * 0.35, p.x, p.y);
+        ctx.arc(p.x, p.y - p.size * 0.15, p.size * 0.15, Math.PI / 2, Math.PI / 2 - 4 - p.rot * 0.2, true);
+        ctx.stroke();
       } else if (p.kind === 'dust') {
         ctx.fillStyle = p.color;
         ctx.beginPath(); circle(p.x, p.y, p.size * (1 + p.life * 2)); ctx.fill();
@@ -994,8 +1163,10 @@
   // ---------- Ana çizim ----------
   function draw() {
     drawBackground();
-    for (const o of obstacles) if (o.type === 'rock') drawRock(o);
+    for (const o of obstacles) if (o.type === 'puddle') drawPuddle(o);
+    for (const o of obstacles) if (o.type === 'ball' && o.state === 'come') drawBall(o);
     drawGirl(player);
+    for (const o of obstacles) if (o.type === 'ball' && o.state !== 'come') drawBall(o);
     for (const o of obstacles) if (o.type === 'cloud') drawCloudObstacle(o);
     drawParticles();
     drawTexts();
@@ -1009,7 +1180,7 @@
     if (mode === 'play' && useCamera && lostT > 1) {
       bubble('Seni göremiyorum 👀 Kameraya gel!', H * 0.4, '#e2468f', true);
     } else if (hint && mode === 'play') {
-      bubble(hint.type === 'cloud' ? '☁️ EĞİL! ⬇️' : '⬆️ ZIPLA ya da TEKME 🦶', topY, hint.type === 'cloud' ? '#2a7fc2' : '#8a5a2b', true);
+      bubble(HINTS[hint.type].text, topY, HINTS[hint.type].color, true);
     }
 
     if (mode === 'countdown') {
@@ -1043,7 +1214,9 @@
       PoseInput.update(now);
       PoseInput.consumeJump();
       PoseInput.consumeKick();
+      PoseInput.consumeBlow();
     }
+    if (mode === 'paused') { BlowMic.update(now, true); BlowMic.consume(); }
     draw();
     requestAnimationFrame(frame);
   }
@@ -1054,7 +1227,7 @@
     get state() {
       return {
         mode, score,
-        obstacles: obstacles.map(o => ({ type: o.type, dx: (o.x - player.x) / U, state: o.state || (o.hit ? 'hit' : 'come') })),
+        obstacles: obstacles.map(o => ({ type: o.type, dx: (o.x - player.x) / U, state: o.state || (o.hit ? 'hit' : o.blown ? 'blown' : 'come') })),
         player: { ...player },
       };
     },

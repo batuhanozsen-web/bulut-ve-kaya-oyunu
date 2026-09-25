@@ -13,7 +13,7 @@ html = html.replace(
     '<link rel="stylesheet" href="style.css">',
     "<style>\n" + (ROOT / "style.css").read_text(encoding="utf-8") + "</style>",
 )
-for name in ["audio", "pose", "game"]:
+for name in ["audio", "pose", "blow", "game"]:
     html = html.replace(
         f'<script src="js/{name}.js"></script>',
         "<script>\n" + (ROOT / "js" / f"{name}.js").read_text(encoding="utf-8") + "</script>",

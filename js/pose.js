@@ -1,10 +1,12 @@
-// Kameradan vücut hareketlerini algılar (MediaPipe Pose Landmarker).
-// Çıktılar: eğilme (sürekli durum), zıplama ve tekme (tek seferlik olaylar).
+// Kameradan vücut hareketlerini algılar (MediaPipe Pose + Face Landmarker).
+// Çıktılar: eğilme (sürekli durum), zıplama, tekme ve üfleme (tek seferlik olaylar).
 window.PoseInput = (() => {
   const MP_VER = '0.10.14';
   const CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
   const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+  const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
   const CALIB_FRAMES = 30;
+  const BLOW_ON = 0.4;    // dudak büzme / yanak şişirme skoru (0–1) bu değeri geçerse "üflüyor"
 
   // Eşikler, kalibrasyonda ölçülen gövde boyuna (omuz→kalça) oranla verilir.
   const DUCK_ON = 0.35;   // omuz/burun bu kadar aşağı inerse "eğildi"
@@ -22,6 +24,8 @@ window.PoseInput = (() => {
     label: '',
     rearCamera: false,
     zoom: null,
+    faceSeen: false,
+    blowScore: 0,
   };
 
   let landmarker = null;
@@ -38,6 +42,8 @@ window.PoseInput = (() => {
   let flashLabel = '', flashUntil = 0;
   let zoomCaps = null;
   let currentDeviceId = null;
+  let faceLm = null, faceCanvas = null, fctx = null;
+  let frameN = 0, blowFrames = 0, blowQ = false, lastBlowAt = 0;
 
   const BONES = [[11, 12], [11, 23], [12, 24], [23, 24], [11, 13], [13, 15], [12, 14], [14, 16],
     [23, 25], [25, 27], [24, 26], [26, 28]];
@@ -69,6 +75,24 @@ window.PoseInput = (() => {
         landmarker = await vision.PoseLandmarker.createFromOptions(fileset, opts('GPU'));
       } catch (e) {
         landmarker = await vision.PoseLandmarker.createFromOptions(fileset, opts('CPU'));
+      }
+      // Yüz modeli sadece üflemeyi algılamak için; yüklenemezse oyun onsuz devam eder.
+      onStatus('Yüz algılayıcı yükleniyor…');
+      const faceOpts = delegate => ({
+        baseOptions: { modelAssetPath: FACE_MODEL, delegate },
+        runningMode: 'VIDEO',
+        numFaces: 1,
+        outputFaceBlendshapes: true,
+      });
+      try {
+        faceLm = await vision.FaceLandmarker.createFromOptions(fileset, faceOpts('GPU'));
+      } catch (e) {
+        try {
+          faceLm = await vision.FaceLandmarker.createFromOptions(fileset, faceOpts('CPU'));
+        } catch (e2) {
+          console.warn('Yüz algılayıcı yüklenemedi', e2);
+          faceLm = null;
+        }
       }
     }
     recalibrate();
@@ -137,7 +161,7 @@ window.PoseInput = (() => {
     state.calibrated = false;
     state.calibProgress = 0;
     state.duck = false;
-    jumpQ = kickQ = false;
+    jumpQ = kickQ = blowQ = false;
   }
 
   function update(now) {
@@ -153,6 +177,7 @@ window.PoseInput = (() => {
     const lm = res && res.landmarks && res.landmarks[0];
     if (lm) analyse(lm, now);
     else state.visible = false;
+    if (lm && state.visible && state.calibrated) detectBlow(lm, now);
     updateLabel(now);
     draw(lm);
   }
@@ -226,6 +251,50 @@ window.PoseInput = (() => {
     }
   }
 
+  // Üfleme: pozdan kafanın yerini bul, o bölgeyi büyütüp yüz modeline ver
+  // (çocuk uzakta olduğu için tüm karede yüz çok küçük kalır).
+  function detectBlow(lm, now) {
+    if (!faceLm) return;
+    if (++frameN % 2) return; // her iki karede bir: telefonu yormamak için
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const earW = Math.abs(lm[7].x - lm[8].x) * vw;
+    const shW = Math.abs(lm[11].x - lm[12].x) * vw;
+    const size = Math.max(earW * 2.6, shW * 0.9, 48);
+    let sx = lm[0].x * vw - size / 2, sy = lm[0].y * vh - size * 0.55;
+    if (!faceCanvas) {
+      faceCanvas = document.createElement('canvas');
+      faceCanvas.width = faceCanvas.height = 256;
+      fctx = faceCanvas.getContext('2d');
+    }
+    // kaynak dikdörtgeni video sınırlarına kırp (Safari taşan kaynağı çizmez)
+    const x0 = Math.max(0, sx), y0 = Math.max(0, sy);
+    const x1 = Math.min(vw, sx + size), y1 = Math.min(vh, sy + size);
+    if (x1 - x0 < 8 || y1 - y0 < 8) return;
+    const k = 256 / size;
+    fctx.fillStyle = '#000';
+    fctx.fillRect(0, 0, 256, 256);
+    fctx.drawImage(video, x0, y0, x1 - x0, y1 - y0, (x0 - sx) * k, (y0 - sy) * k, (x1 - x0) * k, (y1 - y0) * k);
+    let res;
+    try {
+      res = faceLm.detectForVideo(faceCanvas, now);
+    } catch (e) {
+      return;
+    }
+    const bs = res && res.faceBlendshapes && res.faceBlendshapes[0];
+    if (!bs) { state.faceSeen = false; state.blowScore = 0; blowFrames = 0; return; }
+    state.faceSeen = true;
+    const get = n => (bs.categories.find(c => c.categoryName === n) || { score: 0 }).score;
+    const score = Math.max(get('mouthPucker'), get('mouthFunnel'), get('cheekPuff'));
+    state.blowScore = score;
+    blowFrames = score > BLOW_ON ? blowFrames + 1 : 0;
+    if (blowFrames >= 2 && now - lastBlowAt > 800) {
+      blowQ = true;
+      lastBlowAt = now;
+      blowFrames = 0;
+      flash('Üfledi 💨', now);
+    }
+  }
+
   function flash(text, now) { flashLabel = text; flashUntil = now + 600; }
 
   function updateLabel(now) {
@@ -273,5 +342,7 @@ window.PoseInput = (() => {
     state,
     consumeJump() { const j = jumpQ; jumpQ = false; return j; },
     consumeKick() { const k = kickQ; kickQ = false; return k; },
+    consumeBlow() { const b = blowQ; blowQ = false; return b; },
+    get faceReady() { return !!faceLm; },
   };
 })();

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#8fd3ff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <title>Bulut ve Kaya Macerası</title>
+  <title>Bulut, Top ve Su Macerası</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&display=swap" rel="stylesheet">
@@ -34,7 +34,10 @@
 
   <!-- Dokunmatik kontroller -->
   <div id="touchControls" class="hidden">
-    <button id="tDuck" class="tbtn">⬇️<span>Eğil</span></button>
+    <div class="left">
+      <button id="tDuck" class="tbtn">⬇️<span>Eğil</span></button>
+      <button id="tBlow" class="tbtn">💨<span>Üfle</span></button>
+    </div>
     <div class="right">
       <button id="tKick" class="tbtn">🦶<span>Tekme</span></button>
       <button id="tJump" class="tbtn">⬆️<span>Zıpla</span></button>
@@ -44,8 +47,8 @@
   <!-- Başlangıç ekranı -->
   <div id="startScreen" class="overlay">
     <div class="panel">
-      <h1>☁️ Bulut ve Kaya Macerası ⭐</h1>
-      <p class="lead">Bulut gelince <b>eğil</b>, kaya gelince <b>zıpla</b> ya da <b>tekme at</b>!</p>
+      <h1>☁️ Bulut, Top ve Su Macerası ⚽</h1>
+      <p class="lead">Bulut gelince <b>eğil</b> ya da <b>üfle</b>, top gelince <b>vur</b>, su birikintisinde <b>zıpla</b>!</p>
       <div class="btn-row">
         <button id="btnCamera" class="big">📷 Kamerayla Oyna</button>
         <button id="btnTouch" class="big alt">👆 Dokunarak Oyna</button>
@@ -58,9 +61,10 @@
           <li>Çocuk kameradan <b>2–3 adım</b> uzakta durmalı; başından dizlerine kadar görünmesi yeterli.</li>
           <li>Sığmıyorsa ayar ekranından geniş açılı kamerayı ya da en düşük zoom'u seçin.</li>
           <li>Ortam aydınlık olsun, arkada başka kişi olmasın.</li>
-          <li>Oyunda kaybetmek yok: bulut ya da kaya çarparsa sadece küçük bir efekt olur ve oyun devam eder.</li>
+          <li>Oyunda kaybetmek yok: bulut çarparsa fırtına olur, top çarparsa takla atılır, suya basılırsa ıslanılır; oyun devam eder.</li>
+          <li>Üfleme hem yüzden (dudak büzme, yanak şişirme) hem mikrofondan algılanır. Mikrofon izni isteğe bağlıdır.</li>
           <li>Görüntü cihazdan dışarı gönderilmez; hareket algılama tarayıcı içinde çalışır.</li>
-          <li>Klavye: ↓ eğil, ↑ / boşluk zıpla, → tekme, P mola.</li>
+          <li>Klavye: ↓ eğil, ↑ / boşluk zıpla, → tekme, B üfle, P mola.</li>
         </ul>
       </details>
     </div>
@@ -95,6 +99,7 @@
 
   <script src="js/audio.js"></script>
   <script src="js/pose.js"></script>
+  <script src="js/blow.js"></script>
   <script src="js/game.js"></script>
 </body>
 </html>
